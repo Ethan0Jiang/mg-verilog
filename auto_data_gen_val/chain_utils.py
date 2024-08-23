@@ -22,6 +22,8 @@ from langchain.chains import LLMChain
 from langchain.llms import HuggingFaceTextGenInference
 from langchain.output_parsers import OutputFixingParser
 
+from transformers import GPT2Tokenizer
+
 #NOTE: if langchain version is too old, change this /home/user_name/anaconda3/envs/tvm/lib/python3.8/site-packages/langchain/callbacks/openai_info.py 
 # MODEL_COST_PER_1K_TOKENS 
 
@@ -706,20 +708,6 @@ class SimpleConverseChain:
         return response
 
 
-class VerilogEval:
-    def __init__(self, model="gpt-3.5-turbo-1106", system_prompt=None) -> None:
-        if system_prompt is None:
-            self.system_prompt = "Explain the high-level functionality of the Verilog module. Use as many high-level concepts that are directly applicable to describe the code, say at the level of an undergraduate EECS major, but do not include extraneous details that aren't immediately applicable. Use text-based truth tables and state transition graphs when necessary. Speak concisely as if this was a specification for a circuit designer to implement. You should only reply with descriptive natural language and not use any code."
-            # self.system_prompt = "Explain the high-level functionality of the Verilog module. Use as many high-level concepts that are directly applicable to describe the code, say at the level of an undergraduate EECS major, but do not include extraneous details that aren't immediately applicable. Use text-based truth tables and state transition graphs when necessary. You should only reply with descriptive natural language and not use any code."
-            # self.sft_data_gen_chain =  SimpleConverseChain(system_prompt=self.system_prompt, 
-            #                                                model=model, 
-            #                                                temperature=0.7, 
-            #                                                max_tokens=1024, 
-            #                                                top_p=0.95, 
-            #                                                have_memory=False, 
-            #                                                verbose=False)
-        self.sft_data_gen_chain =  SimpleConverseChain(system_prompt=self.system_prompt, model=model, temperature=0.95, max_tokens=512, top_p=0.95, have_memory=False, verbose=False)
-
 
     def verilog_eval_sft_data(self, code_string, desc_key = "detail_description", example_code_description_file=None, example_code_strings={}):
         #example_code_description_file: jsonl
@@ -750,8 +738,50 @@ class VerilogEval:
         user_prompt += code_string
         user_prompt += "```\n"
         
-        response = self.sft_data_gen_chain.chat(example_prompt+user_prompt)
+        # Initialize the tokenizer (use the appropriate tokenizer for your model)
+        tokenizer = GPT2Tokenizer.from_pretrained('gpt2')  
+        
+        
+        user_prompt_tokens = tokenizer.encode(user_prompt)
+
+        if len(user_prompt_tokens) > 15000:
+            # Calculate the number of excess tokens
+            excess_tokens = len(user_prompt_tokens) - 15000
+
+            # Tokenize user_prompt and truncate it to remove the excess tokens
+            truncated_user_prompt_tokens = user_prompt_tokens[:-excess_tokens]
+
+            # Convert the truncated tokens back to string
+            user_prompt = tokenizer.decode(truncated_user_prompt_tokens)
+
+            user_prompt += "```\n"
+
+        # Tokenize the combined prompt
+        combined_prompt = example_prompt + user_prompt
+        combined_tokens = tokenizer.encode(combined_prompt)
+        
+        # Check if the combined token length exceeds 16000
+        if len(combined_tokens) > 16000:
+            # Calculate the number of excess tokens
+            excess_tokens = len(combined_tokens) - 16000
+            
+            # Tokenize example_prompt and truncate it to remove the excess tokens
+            example_prompt_tokens = tokenizer.encode(example_prompt)
+            truncated_example_prompt_tokens = example_prompt_tokens[:-excess_tokens]
+            
+            # Convert the truncated tokens back to string
+            example_prompt_reduced = tokenizer.decode(truncated_example_prompt_tokens)
+
+            example_prompt_reduced += "```\n"
+
+            combined_prompt = example_prompt_reduced + user_prompt
+
+        
+        # Make the API call with the combined prompt
+        response = self.sft_data_gen_chain.chat(combined_prompt)
         return response
+    
+    
     
     def code_gen(self, description_file, eval_file, result_file, repeat=10):
         #description_file: jsonl
